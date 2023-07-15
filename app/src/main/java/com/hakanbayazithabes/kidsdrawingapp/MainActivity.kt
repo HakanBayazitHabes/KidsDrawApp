@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
@@ -271,6 +272,7 @@ class MainActivity : AppCompatActivity() {
                                 "File saved successfully :$result",
                                 Toast.LENGTH_LONG
                             ).show()
+                            shareImage(result)
                         } else {
                             Toast.makeText(
                                 this@MainActivity,
@@ -301,6 +303,31 @@ class MainActivity : AppCompatActivity() {
         if (customProgressDialog != null) {
             customProgressDialog?.dismiss()
             customProgressDialog = null
+        }
+    }
+
+    private fun shareImage(result: String) {
+        //scanFile() metodu, tarama işlemi tamamlandığında bir geri çağırma işlevi (callback) alır.
+        // Geri çağırma işlevi, taranan dosyanın yolunu (path) ve URI'sini (uri) içeren bilgileri alır.
+        //MediaScannerConnection.scanFile() yöntemi kullanılarak,
+        // resmin varlığını medya tarayıcısına bildirilir ve taranması sağlanır.
+        MediaScannerConnection.scanFile(this, arrayOf(result), null) { path, uri ->
+            //shareIntent adında bir Intent nesnesi oluşturulur. Bu intent, resmi paylaşmak için kullanılacaktır.
+            val shareIntent = Intent()
+            //shareIntent.action özelliği, paylaşım işleminin türünü belirlemek için Intent.ACTION_SEND değeriyle ayarlanır.
+            shareIntent.action = Intent.ACTION_SEND
+            //shareIntent.putExtra() yöntemi kullanılarak, paylaşılacak olan resmin URI'si Intent.EXTRA_STREAM anahtarına eklenir.
+            shareIntent.putExtra(Intent.EXTRA_STREAM, uri)
+            //shareIntent.type özelliği, paylaşılan verinin türünü belirtmek için "image/png" olarak ayarlanır.
+            // Bu durumda, bir PNG görüntüsü paylaşılacak.
+            shareIntent.type = "image/png"
+            //startActivity(Intent.createChooser(shareIntent, "share")) ile paylaşma işlemi başlatılır. createChooser() yöntemi,
+            // kullanıcıya paylaşım için uygun uygulamaların bir listesini sunar ve kullanıcının bir seçim yapmasını sağlar.
+            // "share" metni, paylaşım seçici penceresinin başlığını temsil eder.
+            startActivity(Intent.createChooser(shareIntent, "share"))
+
+            ///Bu kod, MediaScannerConnection'ı kullanarak belirtilen bir resmi tarar ve
+            // daha sonra bu resmi paylaşmak için bir Intent oluşturur ve paylaşım işlemini başlatır.
         }
     }
 
