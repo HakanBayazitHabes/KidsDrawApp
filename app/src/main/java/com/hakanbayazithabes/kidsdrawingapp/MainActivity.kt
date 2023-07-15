@@ -3,6 +3,7 @@ package com.hakanbayazithabes.kidsdrawingapp
 import android.Manifest
 import android.app.Dialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -11,10 +12,10 @@ import android.os.Build
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.os.Environment
-import android.os.Message
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.View
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -23,35 +24,50 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
     private var drawingView: DrawingView? = null
     private var mImageButtonCurrentPaint: ImageButton? = null
 
+
     val requestPermission: ActivityResultLauncher<Array<String>> =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permisions ->
-            permisions.entries.forEach {
-                val permissionName = it.key //iznin ismi tutulur
-                val isGranted = it.value //izin verilip verilmediğine bakılır
-                print("Geldi")
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+            permissions.entries.forEach {
+                val perMissionName = it.key
+                val isGranted = it.value
+                //if permission is granted show a toast and perform operation
                 if (isGranted) {
                     Toast.makeText(
-                        this, "Permission granted now you can read the storage files",
+                        this@MainActivity,
+                        "Permission granted now you can read the storage files.",
                         Toast.LENGTH_LONG
                     ).show()
+                    val pickIntent =
+                        Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+                    openGalleryLauncher.launch(pickIntent)
                 } else {
-                    if (permissionName == android.Manifest.permission.READ_EXTERNAL_STORAGE) {
+                    //Displaying another toast if permission is not granted and this time focus on
+                    //    Read external storage
+                    if (perMissionName == Manifest.permission.READ_EXTERNAL_STORAGE)
                         Toast.makeText(
-                            this, "Oops you just denied the permission.", Toast.LENGTH_LONG
+                            this@MainActivity,
+                            "Oops you just denied the permission.",
+                            Toast.LENGTH_LONG
                         ).show()
-                    }
                 }
-
             }
-        }
 
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +95,16 @@ class MainActivity : AppCompatActivity() {
         val ibUndo: ImageButton = findViewById(R.id.ib_undo)
         ibUndo.setOnClickListener {
             drawingView?.onClickUndo()
+        }
+
+        val ibSave: ImageButton = findViewById(R.id.ib_save)
+        ibSave.setOnClickListener {
+            if (isReadStorageAllowed()) {
+                lifecycleScope.launch {
+                    val flDrawingView: FrameLayout = findViewById(R.id.fl_drawing_view)
+                    saveBitmapFile(getBitmapFromView(flDrawingView))
+                }
+            }
         }
 
         val ibGallery: ImageButton = findViewById(R.id.ib_gallery)
@@ -150,44 +176,38 @@ class MainActivity : AppCompatActivity() {
         builder.create().show()
     }
 
+    private fun isReadStorageAllowed(): Boolean {
+        val result =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE)
+        return result == PackageManager.PERMISSION_GRANTED
+    }
+
+
     private fun requestStoragePermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (Environment.isExternalStorageManager()) {
-                // Permission already granted
-                val pickIntent =
-                    Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-                openGalleryLauncher.launch(pickIntent)
-            } else {
-                // Permission not granted, request it
-                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                val uri = Uri.fromParts("package", packageName, null)
-                intent.data = uri
-                startActivity(intent)
-                Toast.makeText(
-                    this,
-                    "Please grant permission to access external storage.",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+        // Check if the permission was denied and show rationale
+        if (
+            ActivityCompat.shouldShowRequestPermissionRationale(
+                this,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            )
+        ) {
+            //call the rationale dialog to tell the user why they need to allow permission request
+            showRationaleDialog(
+                "Kids Drawing App", "Kids Drawing App " +
+                        "needs to Access Your External Storage"
+            )
         } else {
-            // Android 10 or lower, request the permission
-            if (ActivityCompat.shouldShowRequestPermissionRationale(
-                    this,
-                    Manifest.permission.READ_EXTERNAL_STORAGE
+            // You can directly ask for the permission.
+            //if it has not been denied then request for permission
+            //  The registered ActivityResultCallback gets the result of this request.
+            requestPermission.launch(
+                arrayOf(
+                    Manifest.permission.READ_EXTERNAL_STORAGE,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
                 )
-            ) {
-                showRationaleDialog(
-                    "Drawing App",
-                    "Drawing App needs to Access your External Storage"
-                )
-            } else {
-                requestPermission.launch(
-                    arrayOf(
-                        Manifest.permission.READ_EXTERNAL_STORAGE
-                    )
-                )
-            }
+            )
         }
+
     }
 
     val openGalleryLauncher: ActivityResultLauncher<Intent> =
@@ -210,6 +230,63 @@ class MainActivity : AppCompatActivity() {
 
         view.draw(canvas)
         return returnedBitmap
+        //Bu yöntem, View örneğinin bir ekran görüntüsünü almak veya
+        // View'in çizimini başka bir yerde kullanmak gibi durumlarda kullanılabilir.
+    }
+
+    private suspend fun saveBitmapFile(mBitmap: Bitmap?): String {
+        var result = ""
+        withContext(Dispatchers.IO) {
+            if (mBitmap != null) {
+                try {
+                    //Bitmap nesnesini sıkıştırmak ve bir dosyaya kaydetmek için kullanılacak olan
+                    // ByteArrayOutputStream nesnesi olan bytes oluşturulur
+                    val bytes = ByteArrayOutputStream()
+                    mBitmap.compress(Bitmap.CompressFormat.PNG, 90, bytes)
+
+                    //Kaydedilecek dosyanın yolunu temsil eden File nesnesi olan f oluşturulur. Dosyanın adı, "KidsDrawingApp_" ile başlar
+                    // ve System.currentTimeMillis() / 1000 ifadesiyle bir zaman damgası eklenerek benzersiz hale getirilir.
+                    // Dosya, externalCacheDir ile harici bir önbellek dizininde oluşturulur.
+                    val f =
+                        File(externalCacheDir?.absoluteFile.toString() + File.separator + "KidsDrawingApp_" + System.currentTimeMillis() / 1000 + ".png")
+
+                    //Dosyayı yazmak için bir FileOutputStream nesnesi olan fo oluşturulur ve bytes'ın byte dizisini yazdırır.
+                    val fo = FileOutputStream(f)
+                    fo.write(bytes.toByteArray())
+                    //fo kapatılır.
+                    fo.close()
+
+                    //Kaydedilen dosyanın mutlak yolunu temsil eden f.absolutePath değeri, result değişkenine atanır.
+                    result = f.absolutePath
+
+                    // runOnUiThread bloğu içinde UI iş parçacığına geçilir ve kullanıcıya geribildirim vermek için bir Toast mesajı gösterilir.
+                    // result boş değilse, dosya başarıyla kaydedilmiş olarak kabul edilir ve dosyanın yolunu içeren bir mesaj gösterilir.
+                    // Aksi takdirde, bir hata mesajı gösterilir.
+                    runOnUiThread {
+                        if (result.isNotEmpty()) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "File saved successfully :$result",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Something went wrong while saving the file",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            print("UI çalışıyor.")
+                        }
+                    }
+                    //Bu kod, bir Bitmap nesnesini bir PNG dosyası olarak kaydederek, bu dosyanın yolunu döndürür ve aynı zamanda kullanıcıya
+                    // bir geribildirim mesajı gösterir.
+                } catch (e: Exception) {
+                    result = ""
+                    e.printStackTrace()
+                }
+            }
+        }
+        return result
     }
 
 }
